@@ -28,15 +28,28 @@
 
 #define LOGGING
 
-// enable the proper drivers from the following
+// Device drivers
+// Enable one driver in each category
+
+// Motor controller:
 #define ENABLE_ADAFRUIT_MOTOR_DRIVER
+
+// Distance sensor
 #define ENABLE_NEWPING_DISTANCE_SENSOR_DRIVER
 
+// Remote control:
+//#define ENABLE_BLUESTICK_REMOTE_CONTROL_DRIVER
+#define ENABLE_ROCKETBOT_REMOTE_CONTROL_DRIVER
+
 // constants
-#define RUN_TIME 30                     /**< seconds the robot will run */
 #define TOO_CLOSE 10                    /**< distance to obstacle in centimeters */
 #define MAX_DISTANCE (TOO_CLOSE * 20)   /**< maximum distance to track with sensor */
 #define RANDOM_ANALOG_PIN 5             /**< unused analog pin to use as random seed */
+#define BT_RX_PIN 16                    /**< RX pin for Bluetooth communcation */
+#define BT_TX_PIN 17                    /**< TX pin for Bluetooth communcation */
+
+#include <SoftwareSerial.h>
+SoftwareSerial BTSerial(BT_RX_PIN, BT_TX_PIN);
 
 #ifdef ENABLE_ADAFRUIT_MOTOR_DRIVER
 #include <AFMotor.h>
@@ -49,6 +62,16 @@
 #include <NewPing.h>
 #include "newping_distance_sensor.h"
 #define DISTANCE_SENSOR_INIT 14,15,MAX_DISTANCE
+#endif
+
+#ifdef ENABLE_BLUESTICK_REMOTE_CONTROL_DRIVER
+#include "bluestick_remote_control.h"
+#define REMOTE_CONTROL_INIT
+#endif
+
+#ifdef ENABLE_ROCKETBOT_REMOTE_CONTROL_DRIVER
+#include "rocketbot_remote_control.h"
+#define REMOTE_CONTROL_INIT 10,50
 #endif
 
 #include "logging.h"
@@ -65,7 +88,8 @@ namespace Michelino
         Robot()
             : leftMotor(LEFT_MOTOR_INIT), rightMotor(RIGHT_MOTOR_INIT),
               distanceSensor(DISTANCE_SENSOR_INIT),
-              distanceAverage(TOO_CLOSE * 10)
+              distanceAverage(TOO_CLOSE * 10),
+              remoteControl(REMOTE_CONTROL_INIT)
         {
             initialize();
         }
@@ -76,8 +100,7 @@ namespace Michelino
         void initialize()
         {
             randomSeed(analogRead(RANDOM_ANALOG_PIN));
-            endTime = millis() + RUN_TIME * 1000;
-            move();
+            remote();
         }
         
         /*
@@ -86,26 +109,58 @@ namespace Michelino
          */
         void run()
         {
-            if (stopped())
-                return;
-
             unsigned long currentTime = millis();
             int distance = distanceAverage.add(distanceSensor.getDistance());
-            log("state: %d, currentTime: %lu, distance: %u\n", state, currentTime, distance);
+            RemoteControlDriver::command_t remoteCmd;
+            bool haveRemoteCmd = remoteControl.getRemoteCommand(remoteCmd);
+            log("state: %d, currentTime: %lu, distance: %u remote: (%d,l:%d,r:%d,k:%d)\n", 
+                state, currentTime, distance, 
+                haveRemoteCmd, remoteCmd.left, remoteCmd.right, remoteCmd.key);
             
-            if (doneRunning(currentTime))
-                stop();
-            else if (moving()) {
-                if (obstacleAhead(distance))
-                    turn(currentTime);
+            if (remoteControlled()) {
+                if (haveRemoteCmd) {
+                    switch (remoteCmd.key) {
+                    case RemoteControlDriver::command_t::keyF1:
+                        // start "roomba" mode
+                        move();
+                        break;
+                    case RemoteControlDriver::command_t::keyNone:
+                        // this is a directional command
+                        leftMotor.setSpeed(remoteCmd.left);
+                        rightMotor.setSpeed(remoteCmd.right);
+                        break;
+                    default:
+                        break;
+                    }
+                }
             }
-            else if (turning()) {
-                if (doneTurning(currentTime, distance))
-                    move();
+            else {
+                // "roomba" mode
+                if (haveRemoteCmd && remoteCmd.key == RemoteControlDriver::command_t::keyF1) {
+                    // switch back to remote mode
+                    remote();
+                }
+                else {
+                    if (moving()) {
+                        if (obstacleAhead(distance))
+                            turn(currentTime);
+                    }
+                    else if (turning()) {
+                        if (doneTurning(currentTime, distance))
+                            move();
+                    }
+                }
             }
         }
 
     protected:
+        void remote()
+        {
+            leftMotor.setSpeed(0);
+            rightMotor.setSpeed(0);
+            state = stateRemote;
+        }
+        
         void move()
         {
             leftMotor.setSpeed(255);
@@ -118,11 +173,6 @@ namespace Michelino
             leftMotor.setSpeed(0);
             rightMotor.setSpeed(0);
             state = stateStopped;
-        }
-        
-        bool doneRunning(unsigned long currentTime)
-        {
-            return (currentTime >= endTime);
         }
         
         bool obstacleAhead(unsigned int distance)
@@ -154,16 +204,17 @@ namespace Michelino
         bool moving() { return (state == stateMoving); }
         bool turning() { return (state == stateTurning); }
         bool stopped() { return (state == stateStopped); }
+        bool remoteControlled() { return (state == stateRemote); }
 
     private:
         Motor leftMotor;
         Motor rightMotor;
         DistanceSensor distanceSensor;
         MovingAverage<unsigned int, 3> distanceAverage;
-        enum state_t { stateStopped, stateMoving, stateTurning };
+        RemoteControl remoteControl;
+        enum state_t { stateStopped, stateMoving, stateTurning, stateRemote };
         state_t state;
         unsigned long endStateTime;
-        unsigned long endTime;
     };
 };
 
@@ -172,7 +223,7 @@ Michelino::Robot robot;
 void setup()
 {
     Serial.begin(9600);
-    robot.initialize();
+    BTSerial.begin(9600);
 }
 
 void loop()
