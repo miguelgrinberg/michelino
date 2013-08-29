@@ -33,6 +33,7 @@
 
 // Motor controller:
 #define ENABLE_ADAFRUIT_MOTOR_DRIVER
+//#define ENABLE_ARDUINO_MOTOR_DRIVER
 
 // Distance sensor
 #define ENABLE_NEWPING_DISTANCE_SENSOR_DRIVER
@@ -56,6 +57,12 @@ SoftwareSerial BTSerial(BT_RX_PIN, BT_TX_PIN);
 #include "adafruit_motor_driver.h"
 #define LEFT_MOTOR_INIT 1
 #define RIGHT_MOTOR_INIT 3
+#endif
+
+#ifdef ENABLE_ARDUINO_MOTOR_DRIVER
+#include "arduino_motor_driver.h"
+#define LEFT_MOTOR_INIT 12, 3, 9
+#define RIGHT_MOTOR_INIT 13, 11, 8
 #endif
 
 #ifdef ENABLE_NEWPING_DISTANCE_SENSOR_DRIVER
